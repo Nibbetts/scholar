@@ -79,11 +79,12 @@ class Scholar:
             return self.model.get_vector(word)
         return None
 
-    # Return the angle between two angles (assumes a hypersphere)
+    # Return the angle between two vectors (assumes a hypersphere)
+    #   Angle returned is a simple 2D angle, not a multidimensional set of angles.
     def angle(self, vec1, vec2):
         unit_vec1 = vec1 / np.linalg.norm(vec1)
         unit_vec2 = vec2 / np.linalg.norm(vec2)
-        return np.arccos(np.clip(np.dot(unit_vec1, unit_vec2), -1.0, 1.0)) # this is wrong (needs multi-dimensional)
+        return np.arccos(np.clip(np.dot(unit_vec1, unit_vec2), -1.0, 1.0))
 
     # Return the angle between two words
     def get_angle(self, word1, word2):
@@ -522,15 +523,19 @@ class Scholar:
         return np.array(words), similarities
 
     def yarax_analogy(self, word_from, word_to, apply_to_word,
-                      angle_scale=1, num_words=5):
+                      mode="relative", angle_scale=1, num_words=5):
         '''
             Analogy with the Yarax Method
             -----------------------------
+            Options: Can set angle_scale="degrees" or angle_scale="radians".
         '''
         analogy_dir = (self.model.get_vector(word_to) -
                        self.model.get_vector(word_from))
-        analogy_len = (
-            self.get_angle(word_from, word_to)*angle_scale)
+        if mode == "radians": analogy_len = angle_scale
+        elif mode == "degrees": analogy_len = angle_scale*np.pi/180.0
+        elif mode == "relative":
+            analogy_len = self.get_angle(word_from, word_to)*angle_scale
+        else: print "Error: Unrecognized angle mode."
         end_vec = self.yarax(
             self.model.get_vector(apply_to_word), analogy_dir, analogy_len)
         end_vec /= np.linalg.norm(end_vec)
@@ -557,17 +562,17 @@ class Scholar:
             else:
                 print words_y[w], words_n[w]
 
-    def analogic_walk(self, word_from,    word_to,      apply_to_word,
-                      num_words=5,        show_duplicates=False,
-                      start=0,            stop=6,       step=.1):
-                        # Note that these last three are multipliers
-                        #   of the analogical angle.
-                        # Range is inclusive.
-        angle = self.get_angle(word_from, word_to)
+    def analogical_walk(self, word_from,    word_to,         apply_to_word,
+                        num_words=5,        mode="radians",
+                        start=0,            stop=2*np.pi,    step=np.pi/24.0):
+                        # Note that in relative mode, these last three
+                        #   are measured in multiples of the analogical angle.
+                        # Start inclusive. Stop also, if step lands on stop.
         words = []
         for i in range(int(start/step), int(stop/step+1), 1):
-            words.append(self.yarax_analogy(word_from, word_to, apply_to_word,
-                         i*step*angle, num_words)[0].tolist())
+            words.append(self.yarax_analogy(
+                word_from, word_to, apply_to_word, mode,
+                i*step, num_words)[0].tolist())
         words = np.array(words)
         for x in range(len(words)):
             string = ""
@@ -575,6 +580,41 @@ class Scholar:
                 string += word + "  "
             print string
         # return np.array(words)
+
+    def circular_walk_graph(self, a, is_to_b, as_c, num_closest=3):
+        import matplotlib.pyplot as plt
+        words = []
+        angles = []
+        for i in range(360):
+            next_group = self.yarax_analogy(
+                a, is_to_b, as_c,
+                mode="degrees", angle_scale=i, num_words=num_closest)[0]
+            for j in next_group:
+                if j not in words:
+                    words.append(j)
+                    angles.append(i)
+        indecies = range(len(words))
+        analogy_dir = (self.model.get_vector(is_to_b) -
+                       self.model.get_vector(a))
+        position_vecs = [self.yarax(self.model.get_vector(as_c), analogy_dir,
+                            i*np.pi/180.0).tolist() for i in range(360)]
+        word_vecs = [self.model.get_vector(j).tolist() for j in words]
+        graphs = [[self.angle(position_vecs[i],word_vecs[w])*180/np.pi
+                    for i in range(360)] for w in indecies]
+
+        plt.title("Angular Distances of Top " + str(num_closest) +
+                  " Words Passing Near Walk Ring")
+        plt.xlabel("1-Degree steps along ring of " +
+                   is_to_b + " - " + a + " + " + as_c)
+        plt.ylabel("Degrees away from ring")
+        for w in indecies:
+            plt.plot(range(360), graphs[w], 'g-', linewidth=1)
+        for w in indecies:
+            plt.annotate(words[w], xy=(angles[w],
+                         graphs[w][angles[w]]), color='black', fontsize=8)
+        plt.ylim(0,180)
+        plt.xlim(0,359)
+        plt.show()
 
     def reinforced_analogy(self, a, is_to_b, as_c, as_e="", is_to_f="",
                            yarax=True, num_checks=5):
