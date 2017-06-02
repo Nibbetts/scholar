@@ -522,31 +522,47 @@ class Scholar:
             words[word] = self.model.vocab[words[word]]
         return np.array(words), similarities
 
-    def yarax_analogy(self, word_from, word_to, apply_to_word,
-                      mode="relative", angle_scale=1, num_words=5):
+    def yarax_analogy(self, a, is_to_b, as_c, mode="relative",
+                      angle_scale=1, num_words=5, exclude=True):
         '''
             Analogy with the Yarax Method
             -----------------------------
-            Options: Can set angle_scale="degrees" or angle_scale="radians".
+            Options: Can set mode="relative", mode="degrees", or mode="radians"
+                     Can set exclude=True or exclude=False.
         '''
-        analogy_dir = (self.model.get_vector(word_to) -
-                       self.model.get_vector(word_from))
-        if mode == "radians": analogy_len = angle_scale
-        elif mode == "degrees": analogy_len = angle_scale*np.pi/180.0
+        vec_a = self.model.get_vector(a)
+        vec_b = self.model.get_vector(is_to_b)
+        vec_c = self.model.get_vector(as_c)
+        analogy_dir = vec_b - vec_a
+        if mode == "radians": analogy_angle = angle_scale
+        elif mode == "degrees": analogy_angle = angle_scale*np.pi/180.0
         elif mode == "relative":
-            analogy_len = self.get_angle(word_from, word_to)*angle_scale
-        else: print "Error: Unrecognized angle mode."
-        end_vec = self.yarax(
-            self.model.get_vector(apply_to_word), analogy_dir, analogy_len)
+            analogy_angle = self.get_angle(a, is_to_b)*angle_scale
+        else: raise Exception("Unrecognized angle mode.")
+        end_vec = self.yarax(vec_c, analogy_dir, analogy_angle)
         end_vec /= np.linalg.norm(end_vec)
-        return self.wordify(self.model.get_closest_words(end_vec, num_words))
+        if exclude:
+            return self.wordify(self.model.get_closest_words_excluding(
+                end_vec, [vec_a, vec_b, vec_c], num_words))
+        else:
+            return self.wordify(
+                self.model.get_closest_words(end_vec, num_words))
 
-    def normal_analogy(self, word_from, word_to, apply_to_word, num_words=1):
-        analogy_vec = (
-            self.model.get_vector(word_to) - self.model.get_vector(word_from))
-        end_vec = self.model.get_vector(apply_to_word) + analogy_vec
+    def normal_analogy(self, a, is_to_b, as_c, num_words=1, exclude=True):
+        vec_a = self.model.get_vector(a)
+        vec_b = self.model.get_vector(is_to_b)
+        vec_c = self.model.get_vector(as_c)
+        analogy_vec = vec_b - vec_a
+        end_vec = vec_c + analogy_vec
         end_vec /= np.linalg.norm(end_vec)
-        return self.wordify(self.model.get_closest_words(end_vec, num_words))
+        if exclude:
+            #return self.wordify(self.model.get_closest_words_excluding(
+            #    end_vec, [vec_a, vec_b, vec_c], num_words))
+            return self.wordify(self.model.analogy(
+                [is_to_b, as_c], [a], num_words))
+        else:
+            return self.wordify(
+                self.model.get_closest_words(end_vec, num_words))
 
     def compare_analogies(self, word_from, word_to, apply_to_word,
                           angle_scale=1, num_words=10):
@@ -585,6 +601,8 @@ class Scholar:
         import matplotlib.pyplot as plt
         words = []
         angles = []
+        color_tags = ['k-','g-','c-','b-','m-','r-']
+        colors = ['black','green','cyan','blue','magenta','red']
         for i in range(360):
             next_group = self.yarax_analogy(
                 a, is_to_b, as_c,
@@ -592,32 +610,52 @@ class Scholar:
             for j in next_group:
                 if j not in words:
                     words.append(j)
-                    angles.append(i)
+                    angles.append(i) # Can use this as label locations as well.
+        vec_c = self.model.get_vector(as_c)
         indecies = range(len(words))
         analogy_dir = (self.model.get_vector(is_to_b) -
                        self.model.get_vector(a))
-        position_vecs = [self.yarax(self.model.get_vector(as_c), analogy_dir,
+        position_vecs = [self.yarax(vec_c, analogy_dir,
                             i*np.pi/180.0).tolist() for i in range(360)]
         word_vecs = [self.model.get_vector(j).tolist() for j in words]
         graphs = [[self.angle(position_vecs[i],word_vecs[w])*180/np.pi
                     for i in range(360)] for w in indecies]
+        for w in indecies:
+            proximity = 180
+            for n in range(360):
+                if graphs[w][n] < proximity:
+                    proximity = graphs[w][n]
+                    angles[w] = n # The angles at which to place word labels.
+        yarax_real = self.get_angle(a, is_to_b)*180/np.pi
+        normal_real = self.angle(vec_c + analogy_dir, vec_c)*180/np.pi
 
+        # Plotting and Graphing:
         plt.title("Angular Distances of Top " + str(num_closest) +
                   " Words Passing Near Walk Ring")
         plt.xlabel("1-Degree steps along ring of " +
                    is_to_b + " - " + a + " + " + as_c)
         plt.ylabel("Degrees away from ring")
-        for w in indecies:
-            plt.plot(range(360), graphs[w], 'g-', linewidth=1)
-        for w in indecies:
-            plt.annotate(words[w], xy=(angles[w],
-                         graphs[w][angles[w]]), color='black', fontsize=8)
-        plt.ylim(0,180)
+        # Plot the real Yarax end spot as a vertical line.
+        plt.plot([yarax_real]*181, range(181), 'k-', lw=1)
+        plt.annotate("Yarax", xy=(yarax_real,6), color='black', fontsize=9)
+        # Plot the real normal analogy end spot as a vertical line:
+        plt.plot([normal_real]*181, range(181), 'k-', lw=1)
+        plt.annotate("Normal", xy=(normal_real,3), color='black', fontsize=9)
+        # Plot the actual graphs:
+        for w in indecies: # Plot curves
+            plt.plot(range(360), graphs[w], color_tags[w % len(color_tags)],
+                     linewidth=1)
+        for w in indecies: #Plot labels
+            plt.annotate(words[w], xy=(angles[w], graphs[w][angles[w]]),
+                         color=colors[w % len(colors)], fontsize=9)
+        plt.ylim(0,180) # Fixed boundaries
         plt.xlim(0,359)
         plt.show()
 
-    def reinforced_analogy(self, a, is_to_b, as_c, as_e="", is_to_f="",
+    def hydra_analogy(self, a, is_to_b, as_c, as_e="", is_to_f="",
                            yarax=True, num_checks=5):
+        ''' A reinforced analogy that reapplies resulting potential analogies
+            to the original or a second to check which result seems closest.'''
         if as_e == "":
             as_e = a
         if is_to_f == "":
@@ -651,3 +689,27 @@ class Scholar:
                 min_angle = distance[i]
                 index_of_min = i
         return is_to_d[index_of_min]
+
+    def two_way_yarax_analogy(self, a, is_to_b, as_c, num_words=1):
+        ''' Do yarax both ways possible on given analogy,
+            then find the average between the two answers.
+            Note: with the normal analogy, they would be identical.'''
+        vec_a = self.model.get_vector(a)
+        vec_b = self.model.get_vector(is_to_b)
+        vec_c = self.model.get_vector(as_c)
+        analogy_dir_1 = vec_b - vec_a
+        analogy_dir_2 = vec_c - vec_a
+        analogy_angle_1 = self.angle(vec_a,vec_b)
+        analogy_angle_2 = self.angle(vec_a,vec_c)
+        end_vec_1 = self.yarax(vec_c,analogy_dir_1,analogy_angle_1)
+        end_vec_2 = self.yarax(vec_b,analogy_dir_2,analogy_angle_2)
+        end_vec_1 /= np.linalg.norm(end_vec_1)
+        end_vec_2 /= np.linalg.norm(end_vec_2)
+        end_avg = end_vec_1 + end_vec_2
+        end_avg /= np.linalg_norm(end_avg)
+        return self.wordify(self.model.get_closest_words(end_avg, num_words))
+
+    def yarax_intersect_analogy(self, a, is_to_b, as_c, num_words=1):
+        ''' Do yarax from both directions, using as angle the place where the
+            two traced arcs would intersect, whether closer or farther.'''
+        raise NotImplementedError("Intersect not yet implemented.")
