@@ -541,9 +541,20 @@ class Scholar:
         else: raise Exception("Unrecognized angle mode.")
         end_vec = self.yarax(vec_c, analogy_dir, analogy_angle)
         end_vec /= np.linalg.norm(end_vec)
+        # Quick fix so that exclusion works on reduced corpus: {
+        results = self.wordify(
+            self.model.get_closest_words(end_vec, num_words+3))
+        trimmed = ([word for word in results[0]
+                    if word not in [a, is_to_b, as_c]],
+                   [results[1][i] for i in range(len(results[1]))
+                    if results[0][i] not in [a, is_to_b, as_c]])
+        # }
         if exclude:
-            return self.wordify(self.model.get_closest_words_excluding(
-                end_vec, [vec_a, vec_b, vec_c], num_words))
+            #return self.wordify(self.model.get_closest_words_excluding(
+            #    end_vec, [vec_a, vec_b, vec_c], num_words))
+            # Other part of quick fix, and replaces previous 2 lines: {
+            return trimmed[0][:num_words:], trimmed[1][:num_words:]
+            # }
         else:
             return self.wordify(
                 self.model.get_closest_words(end_vec, num_words))
