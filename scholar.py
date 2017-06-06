@@ -522,13 +522,15 @@ class Scholar:
             words[word] = self.model.vocab[words[word]]
         return np.array(words), similarities
 
-    def yarax_analogy(self, a, is_to_b, as_c, mode="relative",
-                      angle_scale=1, num_words=5, exclude=True):
+    def yarax_analogy(self, a, is_to_b, as_c,
+                      num_words=5, exclude=True,
+                      mode="relative", angle_scale=1, pisa="none"):
         '''
             Analogy with the Yarax Method
             -----------------------------
             Options: Can set mode="relative", mode="degrees", or mode="radians"
                      Can set exclude=True or exclude=False.
+                     Can set pisa="none", "source", or "all"
         '''
         vec_a = self.model.get_vector(a)
         vec_b = self.model.get_vector(is_to_b)
@@ -541,46 +543,48 @@ class Scholar:
         else: raise Exception("Unrecognized angle mode.")
         end_vec = self.yarax(vec_c, analogy_dir, analogy_angle)
         end_vec /= np.linalg.norm(end_vec)
-        # Quick fix so that exclusion works on reduced corpus: {
-        results = self.wordify(
-            self.model.get_closest_words(end_vec, num_words+3))
-        trimmed = ([word for word in results[0]
-                    if word not in [a, is_to_b, as_c]],
-                   [results[1][i] for i in range(len(results[1]))
-                    if results[0][i] not in [a, is_to_b, as_c]])
-        # }
         if exclude:
-            #return self.wordify(self.model.get_closest_words_excluding(
-            #    end_vec, [vec_a, vec_b, vec_c], num_words))
-            # Other part of quick fix, and replaces previous 2 lines: {
-            return trimmed[0][:num_words:], trimmed[1][:num_words:]
-            # }
-        else:
+            if self.slim == True: # This branch other part of patch:
+                results = self.wordify(
+                    self.model.get_closest_words(end_vec, num_words+3))
+                trimmed = ([word for word in results[0]
+                            if word not in [a, is_to_b, as_c]],
+                           [results[1][i] for i in range(len(results[1]))
+                            if results[0][i] not in [a, is_to_b, as_c]])
+                return trimmed[0][:num_words:], trimmed[1][:num_words:]
+            else: # This branch is the original return:
+                return self.wordify(self.model.get_closest_words_excluding(
+                    end_vec, [vec_a, vec_b, vec_c], num_words))
+        else: # The real original return...
             return self.wordify(
                 self.model.get_closest_words(end_vec, num_words))
 
-    def normal_analogy(self, a, is_to_b, as_c, num_words=1, exclude=True):
-        vec_a = self.model.get_vector(a)
-        vec_b = self.model.get_vector(is_to_b)
-        vec_c = self.model.get_vector(as_c)
-        analogy_vec = vec_b - vec_a
-        end_vec = vec_c + analogy_vec
-        end_vec /= np.linalg.norm(end_vec)
+    def normal_analogy(self, a, is_to_b, as_c,
+                       num_words=1, exclude=True, pisa="none"):
         if exclude:
             #return self.wordify(self.model.get_closest_words_excluding(
             #    end_vec, [vec_a, vec_b, vec_c], num_words))
             return self.wordify(self.model.analogy(
                 [is_to_b, as_c], [a], num_words))
         else:
+            vec_a = self.model.get_vector(a)
+            vec_b = self.model.get_vector(is_to_b)
+            vec_c = self.model.get_vector(as_c)
+            analogy_vec = vec_b - vec_a
+            end_vec = vec_c + analogy_vec
+            """
+            """
+            end_vec /= np.linalg.norm(end_vec)#FIX THIS!!!
             return self.wordify(
                 self.model.get_closest_words(end_vec, num_words))
 
     def compare_analogies(self, word_from, word_to, apply_to_word,
-                          angle_scale=1, num_words=10):
-        words_y, sims_y = self.yarax_analogy(
-            word_from, word_to, apply_to_word, angle_scale, num_words)
-        words_n, sims_n = self.normal_analogy(
-            word_from, word_to, apply_to_word, num_words)
+                          num_words=10, exclude=True,
+                          mode="relative", angle_scale=1, pisa="none"):
+        words_y, sims_y = self.yarax_analogy(word_from, word_to, apply_to_word,
+            num_words, exclude, mode, angle_scale, pisa)
+        words_n, sims_n = self.normal_analogy(word_from, word_to,
+            apply_to_word, num_words, exclude, mode, angle_scale, pisa)
         print
         print "YARAX:\tNORMAL:\t\tCOS_DIF*1K:"
         for w in range(np.size(words_y)):
@@ -590,7 +594,7 @@ class Scholar:
                 print words_y[w], words_n[w]
 
     def analogical_walk(self, word_from,    word_to,         apply_to_word,
-                        num_words=5,        mode="radians",
+                        num_words=5,        mode="radians",  pisa="none",
                         start=0,            stop=2*np.pi,    step=np.pi/24.0):
                         # Note that in relative mode, these last three
                         #   are measured in multiples of the analogical angle.
@@ -598,8 +602,9 @@ class Scholar:
         words = []
         for i in range(int(start/step), int(stop/step+1), 1):
             words.append(self.yarax_analogy(
-                word_from, word_to, apply_to_word, mode,
-                i*step, num_words)[0].tolist())
+                word_from, word_to, apply_to_word, num_words=num_words,
+                exclude=False, mode=mode, angle_scale=i*step,
+                pisa=pisa)[0].tolist())
         words = np.array(words)
         for x in range(len(words)):
             string = ""
@@ -608,16 +613,17 @@ class Scholar:
             print string
         # return np.array(words)
 
-    def circular_walk_graph(self, a, is_to_b, as_c, num_closest=3):
+    def circular_walk_graph(self, a, is_to_b, as_c,
+                            num_closest=3, pisa="none"):
         import matplotlib.pyplot as plt
         words = []
         angles = []
         color_tags = ['k-','g-','c-','b-','m-','r-']
         colors = ['black','green','cyan','blue','magenta','red']
         for i in range(360):
-            next_group = self.yarax_analogy(
-                a, is_to_b, as_c,
-                mode="degrees", angle_scale=i, num_words=num_closest)[0]
+            next_group = self.yarax_analogy(a, is_to_b, as_c,
+                num_words=num_closest, exclude=False,
+                mode="degrees", angle_scale=i, pisa=pisa)[0]
             for j in next_group:
                 if j not in words:
                     words.append(j)
@@ -664,7 +670,8 @@ class Scholar:
         plt.show()
 
     def hydra_analogy(self, a, is_to_b, as_c, as_e="", is_to_f="",
-                           yarax=True, num_checks=5):
+                           yarax=True, num_checks=5, exclude=True,
+                           pisa="none"):
         ''' A reinforced analogy that reapplies resulting potential analogies
             to the original or a second to check which result seems closest.'''
         if as_e == "":
@@ -674,7 +681,10 @@ class Scholar:
         end_vec = []
         distance = []
         if yarax:
-            is_to_d = self.yarax_analogy(a, is_to_b, as_c, 1, num_checks)[0]
+            is_to_d = self.yarax_analogy(a, is_to_b, as_c,
+                                         num_words=num_checks, exclude=exclude,
+                                         mode="relative", angle_scale=1,
+                                         pisa=pisa)[0]
             for i in range(len(is_to_d)):
                 analogy_dir = (self.model.get_vector(is_to_d[i]) -
                                self.model.get_vector(as_c))
@@ -685,7 +695,8 @@ class Scholar:
                 distance.append(self.angle(end_vec[i],
                                 self.model.get_vector(is_to_f)))
         else:
-            is_to_d = self.normal_analogy(a, is_to_b, as_c, num_checks)[0]
+            is_to_d = self.normal_analogy(a, is_to_b, as_c,
+                                          num_checks, exclude, pisa=pisa)[0]
             for i in range(len(is_to_d)):
                 analogy_vec = (self.model.get_vector(is_to_d[i]) -
                                self.model.get_vector(as_c))
@@ -701,7 +712,8 @@ class Scholar:
                 index_of_min = i
         return is_to_d[index_of_min]
 
-    def two_way_yarax_analogy(self, a, is_to_b, as_c, num_words=1):
+    def two_way_yarax_analogy(self, a, is_to_b, as_c,
+                              num_words=1, exclude=True, pisa="none"):
         ''' Do yarax both ways possible on given analogy,
             then find the average between the two answers.
             Note: with the normal analogy, they would be identical.'''
@@ -718,9 +730,39 @@ class Scholar:
         end_vec_2 /= np.linalg.norm(end_vec_2)
         end_avg = end_vec_1 + end_vec_2
         end_avg /= np.linalg_norm(end_avg)
-        return self.wordify(self.model.get_closest_words(end_avg, num_words))
+        #Original:
+        #   return self.wordify(self.model.get_closest_words(end_avg, num_words))
+        if exclude:
+            if self.slim == True: # This branch other part of patch:
+                results = self.wordify(
+                    self.model.get_closest_words(end_avg, num_words+3))
+                trimmed = ([word for word in results[0]
+                            if word not in [a, is_to_b, as_c]],
+                           [results[1][i] for i in range(len(results[1]))
+                            if results[0][i] not in [a, is_to_b, as_c]])
+                return trimmed[0][:num_words:], trimmed[1][:num_words:]
+            else: # This branch is the original return:
+                return self.wordify(self.model.get_closest_words_excluding(
+                    end_avg, [vec_a, vec_b, vec_c], num_words))
+        else:
+            return self.wordify(
+                self.model.get_closest_words(end_avg, num_words))
 
-    def yarax_intersect_analogy(self, a, is_to_b, as_c, num_words=1):
+    def yarax_intersect_analogy(self, a, is_to_b, as_c,
+                                num_words=1, exclude=True, pisa="none"):
         ''' Do yarax from both directions, using as angle the place where the
             two traced arcs would intersect, whether closer or farther.'''
         raise NotImplementedError("Intersect not yet implemented.")
+
+    def analogy_convergence(self, a, is_to_b, num_words=10):
+        ''' Finds where continued normal vector addition analogies would
+            converge to if taken repeatedly, by simply
+            normalizing the analogy vector and searching nearby.'''
+        end_vec = self.model.get_vector(is_to_b) - self.model.get_vector(a)
+        return self.wordify(self.model.get_closest_words(
+            end_vec / np.linalg.norm(end_vec),
+            num_words))
+
+    def average_vector(self, vec_list):
+        ''' Finds an average vector, given a list of vectors.'''
+        return sum(vec_list) / len(vec_list)
