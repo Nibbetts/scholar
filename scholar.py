@@ -1,6 +1,9 @@
 import word2vec, sys, os, math
 import numpy as np
+import scipy.spatial as spatial
 import cPickle as pkl
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 ''' Files used by this class:
         canon_adj.txt        canon_adj_pl.txt
@@ -160,8 +163,10 @@ class Scholar:
         words_sorted_by_salience.reverse()
         return words_sorted_by_salience
 
+    ''' # No idea why this was here... Daniel?
     def get_vector(self, word):
         return self.model[word]
+    '''
 
     def get_canonical_results_for_nouns_hyper(self, noun, query_tag, canonical_tag_filename, plural, number_of_user_results):
         if self.autoAddTags:
@@ -462,11 +467,14 @@ class Scholar:
         except:
             return False
 
-    ##########################################################################
+
+###############################################################################
+#   The Yarax / Pisa Expansion Set
+###############################################################################
 
     """
         The following functionalities were added by
-        Nathan Tibbetts & Zachary Brown
+        Nathan Tibbetts, Zachary Brown, and Nancy Fulda
 
         Many of them, particularly when finding the nearest word to a given
         vector, are dependent upon an edited version of
@@ -474,25 +482,31 @@ class Scholar:
         For more information, contact Daniel Ricks, author of scholar.
     """
 
+#-----------------------------------------------------------------------------#
+#   Utilities and Helper Functions
+#-----------------------------------------------------------------------------#
+
+
     def yarax(self, vec_x, vec_dir, theta):
         '''
             Distance Respecting Hypersphere Traversal
             Arc-tracer, instead of vector estimation.
             -----------------------------------------
             vec_x: the word vector to apply an analogy to--a normalized vector.
+                This is our starting point.
             vec_ref: the vector of the analogy - length does not matter.
             theta: the angle traversed around the hypersphere
                 in the direction of the reference vector,
                 starting from the tip of vec_x.
             returns: the vector resulting from the angular traversal.
-            Methodology: Y=A^(-1)*R*A*x, where:
+            Methodology: y = A^(-1) * R * A * x, where:
                 x is our starting vector,
                 A is the basis of the plane we want to rotate on,
                     made from vec_x and vec_dir, with vec_dir orthonormalized,
                 R is the simple 2D rotation matrix,
                 A^(-1) is A inverse -
                     achieved by transposing A, since A is orthonormal, and
-                Y is the rotated vector, now in the original basis. Returns.
+                y is the rotated vector, now in the original basis. Returns.
             NOTE: reversing direction is not as simple as a negative angle,
                 simply because if we have rotated past a certain point,
                 our direction vector will already be pointing backwards!
@@ -511,6 +525,12 @@ class Scholar:
                 #    in the basis of the plane to rotate it in:
                 [1, 0]))
 
+
+    def average_vector(self, vec_list):
+        ''' Finds an average vector, given a list of vectors.'''
+        return sum(vec_list) / len(vec_list)
+
+
     # Helper function to deal with returned word indecies instead of words:
     def wordify(self, dual_set):
         # Takes the output set of vectors and similarities
@@ -522,7 +542,125 @@ class Scholar:
             words[word] = self.model.vocab[words[word]]
         return np.array(words), similarities
 
-    def yarax_analogy(self, a, is_to_b, as_c,
+        #dual_set[0] = dual_set[0].tolist()
+        #dual_set[0] = map(self.model.vocab[], dual_set[0]
+        #OR LIST COMPREHENSION!
+
+
+#-----------------------------------------------------------------------------#
+#   Scoring Methods
+#-----------------------------------------------------------------------------#
+
+
+    #spot_to_score is the vec of the word you're measuring the "distance" to.
+    #center_of_search is the vector of the word you got to by applying the
+    #   analogy vector to your source word
+    #direction_of_travel is the analogy vector
+
+    def pisa_score(self, spot_to_score, center_of_search, direction_of_travel):
+        #search in lopsided rings that stretch in the direction of travel
+        #(You know, like the leaning tower of Pisa...)
+
+        supplementary_distance = spatial.distance.cosine(
+            center_of_search + direction_of_travel, # vec_to_source
+            center_of_search - spot_to_score)       # vec_to_word
+
+        scale_factor = 1.0 #CHANGE THIS
+        score = (scale_factor * (2.0-supplementary_distance) + # base_distance:
+                 spatial.distance.cosine(spot_to_score,center_of_search))
+
+        return score
+        #NOTES: 2.0 is not dependent on vectors being normalized.
+        #   Scale factor adjusts length, not angle, measure.
+        #       Overall scale doesn't matter because it's relative to itself.
+        #   Why depend on direction of travel? Can use cosine_dist sums
+        #       of all source words independent of direction of travel...
+        #       although being dependent on direction of travel is interesting,
+        #       as we know that's essentially what yarax does.
+
+
+    def get_closest_words_pisa(self, vec_from_a, vec_to_b, vec_on_c, end_vec,
+                               num_words=10, pisa="diagonal"):
+        # vec_d is the result of the analogy, and the center of our search.
+        if pisa == "diagonal":
+            # Move away from all source words.
+            # Note: if we used (b-a)+(c-a) this would be slightly different
+            #   when using analogies other than Mikolov's vector addition.
+            affordance_vec = end_vec - vec_from_a
+        elif pisa == "source":
+            # Move away from c, the start of the current comparison.
+            affordance_vec = end_vec - vec_on_c
+        elif pisa == "analogous":
+            # Move away from b, the analogical equivalent.
+            affordance_vec = end_vec - vec_to_b
+        else:
+            print "Unrecognized Pisa type \"" + pisa + "\"."
+            return np.array([]), np.array([])
+
+        distances = []
+        for v in self.model.vectors:
+            # Normal distance metric: (can use this function to replace other)
+            #distances.append(spatial.distance.cosine(v, vec_d))
+            distances.append(self.pisa_score(v, end_vec, affordance_vec))
+            # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST
+
+        found_words = []
+        found_distance = []
+        for count in range(0, num_words):
+            min_dist = min(distances)
+            index = distances.index(min_dist)
+            found_words.append(self.model.vocab[index])
+            found_distance.append(min_dist)
+            distances[index] = 1000
+
+        return np.array(map(str,found_words)), np.array(found_distance)
+
+
+#-----------------------------------------------------------------------------#
+#   Analogies
+#-----------------------------------------------------------------------------#
+
+
+    def normal_analogy(self, from_a, to_b, on_c,
+                       num_words=1, exclude=True, pisa="none"):
+        '''
+            Expanded function for for the original analogy designed by Mikolov.
+            The relationship from a to b, applied on c.
+            In Mikolov's code, pos = [to_b, on_c], neg = [from_a],
+                or: b - a + c = d.
+                Parameter order matches analogical reasoning, "a:b::c:d".
+            -------------------------------------------------------------------
+            num_words = the number of closest results to return.
+            exclude = whether or not to exclude the source words.
+                Note: this parameter ignored if using Pisa distance scoring.
+            pisa = the type of pisa scoring to use, namely:
+                "none",
+                "source" to move away in the direction from c to d,
+                "diagonal" to move away in the direction from a to d.
+        '''
+        vec_a = self.model.get_vector(from_a)
+        vec_b = self.model.get_vector(to_b)
+        vec_c = self.model.get_vector(on_c)
+        #analogy_vec = vec_b - vec_a
+        end_vec = vec_b - vec_a + vec_c
+        """
+        """
+        end_vec /= np.linalg.norm(end_vec)#FIX THIS!!!
+
+        if pisa != "none":
+            return self.get_closest_words_pisa(vec_a, vec_b, vec_c, end_vec,
+                                               num_words=num_words, pisa=pisa)
+        elif exclude:
+            #return self.wordify(self.model.get_closest_words_excluding(
+            #    end_vec, [vec_a, vec_b, vec_c], num_words))
+            return self.wordify(self.model.analogy(
+                [to_b, on_c], [from_a], num_words))
+        else:
+            return self.wordify(
+                self.model.get_closest_words(end_vec, num_words))
+
+
+    def yarax_analogy(self, from_a, to_b, on_c,
                       num_words=5, exclude=True,
                       mode="relative", angle_scale=1, pisa="none"):
         '''
@@ -530,28 +668,34 @@ class Scholar:
             -----------------------------
             Options: Can set mode="relative", mode="degrees", or mode="radians"
                      Can set exclude=True or exclude=False.
-                     Can set pisa="none", "source", or "all"
+                     Can set pisa="none", "source", "diagonal", or "analogous".
+            Note: exclude argument ignored if pisa is used.
         '''
-        vec_a = self.model.get_vector(a)
-        vec_b = self.model.get_vector(is_to_b)
-        vec_c = self.model.get_vector(as_c)
+        vec_a = self.model.get_vector(from_a)
+        vec_b = self.model.get_vector(to_b)
+        vec_c = self.model.get_vector(on_c)
         analogy_dir = vec_b - vec_a
         if mode == "radians": analogy_angle = angle_scale
         elif mode == "degrees": analogy_angle = angle_scale*np.pi/180.0
         elif mode == "relative":
-            analogy_angle = self.get_angle(a, is_to_b)*angle_scale
+            analogy_angle = self.get_angle(from_a, to_b)*angle_scale
         else: raise Exception("Unrecognized angle mode.")
         end_vec = self.yarax(vec_c, analogy_dir, analogy_angle)
         end_vec /= np.linalg.norm(end_vec)
-        if exclude:
+
+        if pisa != "none":
+            return self.get_closest_words_pisa(vec_a, vec_b, vec_c, end_vec,
+                                               num_words=num_words, pisa=pisa)
+        elif exclude:
             if self.slim == True: # This branch other part of patch:
                 results = self.wordify(
                     self.model.get_closest_words(end_vec, num_words+3))
                 trimmed = ([word for word in results[0]
-                            if word not in [a, is_to_b, as_c]],
+                            if word not in [from_a, to_b, on_c]],
                            [results[1][i] for i in range(len(results[1]))
-                            if results[0][i] not in [a, is_to_b, as_c]])
-                return trimmed[0][:num_words:], trimmed[1][:num_words:]
+                            if results[0][i] not in [from_a, to_b, on_c]])
+                return (np.array(trimmed[0][:num_words:]),
+                        np.array(trimmed[1][:num_words:]))
             else: # This branch is the original return:
                 return self.wordify(self.model.get_closest_words_excluding(
                     end_vec, [vec_a, vec_b, vec_c], num_words))
@@ -559,24 +703,107 @@ class Scholar:
             return self.wordify(
                 self.model.get_closest_words(end_vec, num_words))
 
-    def normal_analogy(self, a, is_to_b, as_c,
-                       num_words=1, exclude=True, pisa="none"):
-        if exclude:
-            #return self.wordify(self.model.get_closest_words_excluding(
-            #    end_vec, [vec_a, vec_b, vec_c], num_words))
-            return self.wordify(self.model.analogy(
-                [is_to_b, as_c], [a], num_words))
+
+    def hydra_analogy(self, from_a, to_b, on_c, like_e="", is_to_f="",
+                           yarax=True, num_checks=5, exclude=True,
+                           pisa="none"):
+        '''
+            A reinforced analogy that reapplies resulting potential analogies
+            to the original or a second to check which result seems closest.
+        '''
+        if like_e == "":
+            like_e = from_a
+        if is_to_f == "":
+            is_to_f = to_b
+        end_vec = []
+        distance = []
+
+        if yarax:
+            is_to_d = self.yarax_analogy(from_a, to_b, on_c,
+                                         num_words=num_checks, exclude=exclude,
+                                         mode="relative", angle_scale=1,
+                                         pisa=pisa)[0]
+            for i in range(len(is_to_d)):
+                analogy_dir = (self.model.get_vector(is_to_d[i]) -
+                               self.model.get_vector(on_c))
+                analogy_len = self.get_angle(on_c, is_to_d[i])
+                end_vec.append(self.yarax(
+                    self.model.get_vector(like_e), analogy_dir, analogy_len))
+                end_vec[i] /= np.linalg.norm(end_vec[i])
+                distance.append(self.angle(end_vec[i],
+                                self.model.get_vector(is_to_f)))
         else:
-            vec_a = self.model.get_vector(a)
-            vec_b = self.model.get_vector(is_to_b)
-            vec_c = self.model.get_vector(as_c)
-            analogy_vec = vec_b - vec_a
-            end_vec = vec_c + analogy_vec
-            """
-            """
-            end_vec /= np.linalg.norm(end_vec)#FIX THIS!!!
+            is_to_d = self.normal_analogy(from_a, to_b, on_c,
+                                          num_words=num_checks,
+                                          exclude=exclude, pisa=pisa)[0]
+            for i in range(len(is_to_d)):
+                analogy_vec = (self.model.get_vector(is_to_d[i]) -
+                               self.model.get_vector(on_c))
+                end_vec.append(self.model.get_vector(like_e) + analogy_vec)
+                end_vec[i] /= np.linalg.norm(end_vec[i])
+                distance.append(self.angle(end_vec[i],
+                                self.model.get_vector(is_to_f)))
+
+        #index_of_min = distance.index(min(distance))
+        #return [is_to_d[index_of_min]], [distance[index_of_min]]
+        pairs = zip(is_to_d, distance)
+        pairs = sorted(pairs, key=lambda f:f[1])
+        is_to_d, distance = zip(*pairs)
+        return np.array(map(str,is_to_d)), np.array(distance)
+
+
+    def two_way_yarax_analogy(self, from_a, to_b, on_c,
+                              num_words=1, exclude=True, pisa="none"):
+        ''' Do yarax both ways possible on given analogy,
+            then find the average between the two answers.
+            Note: with the normal analogy, they would be identical.'''
+        vec_a = self.model.get_vector(from_a)
+        vec_b = self.model.get_vector(to_b)
+        vec_c = self.model.get_vector(on_c)
+        analogy_dir_1 = vec_b - vec_a
+        analogy_dir_2 = vec_c - vec_a
+        analogy_angle_1 = self.angle(vec_a,vec_b)
+        analogy_angle_2 = self.angle(vec_a,vec_c)
+        end_vec_1 = self.yarax(vec_c,analogy_dir_1,analogy_angle_1)
+        end_vec_2 = self.yarax(vec_b,analogy_dir_2,analogy_angle_2)
+        end_vec_1 /= np.linalg.norm(end_vec_1)
+        end_vec_2 /= np.linalg.norm(end_vec_2)
+        end_avg = end_vec_1 + end_vec_2
+        end_avg /= np.linalg_norm(end_avg)
+        #Original:
+        #   return self.wordify(self.model.get_closest_words(end_avg, num_words))
+        if pisa != "none":
+            return self.get_closest_words_pisa(vec_a, vec_b, vec_c, end_avg,
+                                               num_words=num_words, pisa=pisa)
+        elif exclude:
+            if self.slim == True: # This branch other part of patch:
+                results = self.wordify(
+                    self.model.get_closest_words(end_avg, num_words+3))
+                trimmed = ([word for word in results[0]
+                            if word not in [from_a, to_b, on_c]],
+                           [results[1][i] for i in range(len(results[1]))
+                            if results[0][i] not in [from_a, to_b, on_c]])
+                return (np.array(trimmed[0][:num_words:]),
+                        np.array(trimmed[1][:num_words:]))
+            else: # This branch is the original return:
+                return self.wordify(self.model.get_closest_words_excluding(
+                    end_avg, [vec_a, vec_b, vec_c], num_words))
+        else:
             return self.wordify(
-                self.model.get_closest_words(end_vec, num_words))
+                self.model.get_closest_words(end_avg, num_words))
+
+
+    def yarax_intersect_analogy(self, from_a, to_b, on_c,
+                                num_words=1, exclude=True, pisa="none"):
+        ''' Do yarax from both directions, using as angle the place where the
+            two traced arcs would intersect, whether closer or farther.'''
+        raise NotImplementedError("Intersect not yet implemented.")
+
+
+#-----------------------------------------------------------------------------#
+#   Analogy Toolset
+#-----------------------------------------------------------------------------#
+
 
     def compare_analogies(self, word_from, word_to, apply_to_word,
                           num_words=10, exclude=True,
@@ -592,6 +819,17 @@ class Scholar:
                 print words_y[w], "\t\t", 1000*(sims_y[w]-sims_n[w])
             else:
                 print words_y[w], words_n[w]
+
+
+    def analogy_convergence(self, from_a, to_b, num_words=10):
+        ''' Finds where continued normal vector addition analogies would
+            converge to if taken repeatedly, by simply
+            normalizing the analogy vector and searching nearby.'''
+        end_vec = self.model.get_vector(to_b) - self.model.get_vector(from_a)
+        return self.wordify(self.model.get_closest_words(
+            end_vec / np.linalg.norm(end_vec),
+            num_words))
+
 
     def analogical_walk(self, word_from,    word_to,         apply_to_word,
                         num_words=5,        mode="radians",  pisa="none",
@@ -613,44 +851,85 @@ class Scholar:
             print string
         # return np.array(words)
 
-    def circular_walk_graph(self, a, is_to_b, as_c,
+
+    def circular_walk_graph(self, from_a, to_b, on_c,
                             num_closest=3, pisa="none"):
-        import matplotlib.pyplot as plt
+        '''
+            Walks around the hypersphere in a circle defined by the analogy,
+                taking note of all words appearing within the n closest at any
+                time. Then walks around again, tracking their angular distance
+                from every point along that circular walk, and graphing them.
+            Good for visualizing analogical progression, as well as the
+                supercluster in the space, and minor clusters.
+            Whatever line is lowest at any given point is the "closest" word.
+            Also takes note of where normal and Yarax analogies would fall,
+                drawing a vertical line at that position in the walk.
+            x-axis: my position, in degrees, on my circular walk.
+            y-axis: angle (centered at origin of sphere) from self to features.
+        '''
         words = []
         angles = []
-        color_tags = ['k-','g-','c-','b-','m-','r-']
-        colors = ['black','green','cyan','blue','magenta','red']
-        for i in range(360):
-            next_group = self.yarax_analogy(a, is_to_b, as_c,
+        color_tags = ['k-','g-','b-','m-','r-']
+        colors = ['black','green','blue','magenta','red']
+        vec_a = self.get_vector(from_a)
+        vec_b = self.get_vector(to_b)
+        vec_c = self.get_vector(on_c)
+        analogy_dir = vec_b - vec_a
+
+        # Walk around circle to collect words we want to watch:
+        for i in tqdm(range(0,360,3), desc="Initial Collection Walk"):
+            next_group = self.yarax_analogy(from_a, to_b, on_c,
                 num_words=num_closest, exclude=False,
                 mode="degrees", angle_scale=i, pisa=pisa)[0]
             for j in next_group:
                 if j not in words:
                     words.append(j)
                     angles.append(i) # Can use this as label locations as well.
-        vec_c = self.model.get_vector(as_c)
+
+        # GRAPH CONSTRUCTION:
         indecies = range(len(words))
-        analogy_dir = (self.model.get_vector(is_to_b) -
-                       self.model.get_vector(a))
+        # This is our baseline - the vectors at each angle along the way:
         position_vecs = [self.yarax(vec_c, analogy_dir,
-                            i*np.pi/180.0).tolist() for i in range(360)]
-        word_vecs = [self.model.get_vector(j).tolist() for j in words]
-        graphs = [[self.angle(position_vecs[i],word_vecs[w])*180/np.pi
-                    for i in range(360)] for w in indecies]
+                            i*np.pi/180.0) for i in range(360)]
+        word_vecs = [self.get_vector(j) for j in words]
+        if pisa == "diagonal":
+            graphs = [[self.pisa_score(word_vecs[w], position_vecs[i],
+                                       position_vecs[i] - vec_a)
+                       for i in range(360)] for w in tqdm(indecies,
+                                            desc="Diagonal Pisa Measuring")]
+        elif pisa == "source":
+            graphs = [[self.pisa_score(word_vecs[w], position_vecs[i],
+                                       position_vecs[i] - vec_c)
+                       for i in range(360)] for w in tqdm(indecies,
+                                            desc="Source Pisa Measuring")]
+        elif pisa == "analogous":
+            graphs = [[self.pisa_score(word_vecs[w], position_vecs[i],
+                                       position_vecs[i] - vec_b)
+                       for i in range(360)] for w in tqdm(indecies,
+                                            desc="Analogous Pisa Measuring")]
+        else:
+            if pisa != "none": print "Unrecognized pisa type!"
+            graphs = [[self.angle(position_vecs[i], word_vecs[w])*180/np.pi
+                       for i in range(360)] for w in tqdm(indecies,
+                                            desc="Angle Measuring")]
+
+        # Find the troughs, so we can put word labels there:
         for w in indecies:
             proximity = 180
             for n in range(360):
                 if graphs[w][n] < proximity:
                     proximity = graphs[w][n]
                     angles[w] = n # The angles at which to place word labels.
-        yarax_real = self.get_angle(a, is_to_b)*180/np.pi
+
+        # Find the places where our analogies would end up:
+        yarax_real = self.get_angle(from_a, to_b)*180/np.pi
         normal_real = self.angle(vec_c + analogy_dir, vec_c)*180/np.pi
 
-        # Plotting and Graphing:
+        # PLOTTING AND GRAPHING:
         plt.title("Angular Distances of Top " + str(num_closest) +
                   " Words Passing Near Walk Ring")
         plt.xlabel("1-Degree steps along ring of " +
-                   is_to_b + " - " + a + " + " + as_c)
+                   to_b + " - " + from_a + " + " + on_c)
         plt.ylabel("Degrees away from ring")
         # Plot the real Yarax end spot as a vertical line.
         plt.plot([yarax_real]*181, range(181), 'k-', lw=1)
@@ -663,106 +942,13 @@ class Scholar:
             plt.plot(range(360), graphs[w], color_tags[w % len(color_tags)],
                      linewidth=1)
         for w in indecies: #Plot labels
-            plt.annotate(words[w], xy=(angles[w], graphs[w][angles[w]]),
+            plt.annotate(words[w], xy=(angles[w], graphs[w][angles[w]] + 2),
                          color=colors[w % len(colors)], fontsize=9)
-        plt.ylim(0,180) # Fixed boundaries
+        #plt.annotate(words[0], xy=(angles[0], graphs[0][angles[0]] + 1),
+        #             color=colors[0], fontsize=9) # For the first word again.
+        # Fixed boundaries:
+        if pisa != "none":
+            plt.ylim(0, 5)
+        else: plt.ylim(0, 180)
         plt.xlim(0,359)
         plt.show()
-
-    def hydra_analogy(self, a, is_to_b, as_c, as_e="", is_to_f="",
-                           yarax=True, num_checks=5, exclude=True,
-                           pisa="none"):
-        ''' A reinforced analogy that reapplies resulting potential analogies
-            to the original or a second to check which result seems closest.'''
-        if as_e == "":
-            as_e = a
-        if is_to_f == "":
-            is_to_f = is_to_b
-        end_vec = []
-        distance = []
-        if yarax:
-            is_to_d = self.yarax_analogy(a, is_to_b, as_c,
-                                         num_words=num_checks, exclude=exclude,
-                                         mode="relative", angle_scale=1,
-                                         pisa=pisa)[0]
-            for i in range(len(is_to_d)):
-                analogy_dir = (self.model.get_vector(is_to_d[i]) -
-                               self.model.get_vector(as_c))
-                analogy_len = self.get_angle(as_c, is_to_d[i])
-                end_vec.append(self.yarax(
-                    self.model.get_vector(as_e), analogy_dir, analogy_len))
-                end_vec[i] /= np.linalg.norm(end_vec[i])
-                distance.append(self.angle(end_vec[i],
-                                self.model.get_vector(is_to_f)))
-        else:
-            is_to_d = self.normal_analogy(a, is_to_b, as_c,
-                                          num_checks, exclude, pisa=pisa)[0]
-            for i in range(len(is_to_d)):
-                analogy_vec = (self.model.get_vector(is_to_d[i]) -
-                               self.model.get_vector(as_c))
-                end_vec.append(self.model.get_vector(as_e) + analogy_vec)
-                end_vec[i] /= np.linalg.norm(end_vec[i])
-                distance.append(self.angle(end_vec[i],
-                                self.model.get_vector(is_to_f)))
-        index_of_min = 0
-        min_angle = distance[0]
-        for i in range(len(distance)):
-            if distance[i] < min_angle:
-                min_angle = distance[i]
-                index_of_min = i
-        return is_to_d[index_of_min]
-
-    def two_way_yarax_analogy(self, a, is_to_b, as_c,
-                              num_words=1, exclude=True, pisa="none"):
-        ''' Do yarax both ways possible on given analogy,
-            then find the average between the two answers.
-            Note: with the normal analogy, they would be identical.'''
-        vec_a = self.model.get_vector(a)
-        vec_b = self.model.get_vector(is_to_b)
-        vec_c = self.model.get_vector(as_c)
-        analogy_dir_1 = vec_b - vec_a
-        analogy_dir_2 = vec_c - vec_a
-        analogy_angle_1 = self.angle(vec_a,vec_b)
-        analogy_angle_2 = self.angle(vec_a,vec_c)
-        end_vec_1 = self.yarax(vec_c,analogy_dir_1,analogy_angle_1)
-        end_vec_2 = self.yarax(vec_b,analogy_dir_2,analogy_angle_2)
-        end_vec_1 /= np.linalg.norm(end_vec_1)
-        end_vec_2 /= np.linalg.norm(end_vec_2)
-        end_avg = end_vec_1 + end_vec_2
-        end_avg /= np.linalg_norm(end_avg)
-        #Original:
-        #   return self.wordify(self.model.get_closest_words(end_avg, num_words))
-        if exclude:
-            if self.slim == True: # This branch other part of patch:
-                results = self.wordify(
-                    self.model.get_closest_words(end_avg, num_words+3))
-                trimmed = ([word for word in results[0]
-                            if word not in [a, is_to_b, as_c]],
-                           [results[1][i] for i in range(len(results[1]))
-                            if results[0][i] not in [a, is_to_b, as_c]])
-                return trimmed[0][:num_words:], trimmed[1][:num_words:]
-            else: # This branch is the original return:
-                return self.wordify(self.model.get_closest_words_excluding(
-                    end_avg, [vec_a, vec_b, vec_c], num_words))
-        else:
-            return self.wordify(
-                self.model.get_closest_words(end_avg, num_words))
-
-    def yarax_intersect_analogy(self, a, is_to_b, as_c,
-                                num_words=1, exclude=True, pisa="none"):
-        ''' Do yarax from both directions, using as angle the place where the
-            two traced arcs would intersect, whether closer or farther.'''
-        raise NotImplementedError("Intersect not yet implemented.")
-
-    def analogy_convergence(self, a, is_to_b, num_words=10):
-        ''' Finds where continued normal vector addition analogies would
-            converge to if taken repeatedly, by simply
-            normalizing the analogy vector and searching nearby.'''
-        end_vec = self.model.get_vector(is_to_b) - self.model.get_vector(a)
-        return self.wordify(self.model.get_closest_words(
-            end_vec / np.linalg.norm(end_vec),
-            num_words))
-
-    def average_vector(self, vec_list):
-        ''' Finds an average vector, given a list of vectors.'''
-        return sum(vec_list) / len(vec_list)
