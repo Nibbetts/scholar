@@ -579,9 +579,24 @@ class Scholar:
         #       as we know that's essentially what yarax does.
 
 
+    def get_pisa_scores(self,db_words,center_of_search,direction_of_travel):
+
+        #CALCULATE COSINE SIMILARITIES OF ALL VECTORS TO SOURCE WORD
+        #(We normalize center_of_search in case it doesn't have unit length,
+        #but we assume db_words are normalized already...)
+        base_distances = 1 - np.dot(db_words,center_of_search.T)/(np.linalg.norm(db_words,axis=1)*np.linalg.norm(center_of_search))
+
+        vector_to_source = center_of_search + direction_of_travel
+        vectors_to_words = center_of_search - db_words
+        supplementary_distances = 1 - np.dot(vectors_to_words,vector_to_source.T)/(np.linalg.norm(vectors_to_words,axis=1) * np.linalg.norm(vector_to_source))
+
+        scale_factor = 1 #TO BE PLAYED WITH, or made a variable
+        return scale_factor * (2-supplementary_distances) + base_distances
+
+
     def get_closest_words_pisa(self, vec_from_a, vec_to_b, vec_on_c, end_vec,
                                num_words=10, pisa="diagonal"):
-        # vec_d is the result of the analogy, and the center of our search.
+        # end_vec is the result of the analogy, and the center of our search.
         if pisa == "diagonal":
             # Move away from all source words.
             # Note: if we used (b-a)+(c-a) this would be slightly different
@@ -597,12 +612,15 @@ class Scholar:
             print "Unrecognized Pisa type \"" + pisa + "\"."
             return np.array([]), np.array([])
 
+        '''
         distances = []
         for v in self.model.vectors:
             # Normal distance metric: (can use this function to replace other)
             #distances.append(spatial.distance.cosine(v, vec_d))
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
-            # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST
+            # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
+
+        distances = self.get_pisa_scores(self.model.vectors,end_vec,affordance_vec).tolist() #FIX THIS!!!! Causes distances.index(min_dist) to complain.
 
         found_words = []
         found_distance = []
@@ -769,7 +787,7 @@ class Scholar:
         end_vec_1 /= np.linalg.norm(end_vec_1)
         end_vec_2 /= np.linalg.norm(end_vec_2)
         end_avg = end_vec_1 + end_vec_2
-        end_avg /= np.linalg_norm(end_avg)
+        end_avg /= np.linalg.norm(end_avg)
         #Original:
         #   return self.wordify(self.model.get_closest_words(end_avg, num_words))
         if pisa != "none":
