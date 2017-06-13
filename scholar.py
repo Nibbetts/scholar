@@ -4,7 +4,7 @@ import scipy.spatial as spatial
 import cPickle as pkl
 import matplotlib.pyplot as plt
 from tqdm import tqdm #used in circular_walk_graph
-import time #used in temporary testing of get_pisa_scores
+#import time #used in temporary testing of get_pisa_scores
 
 ''' Files used by this class:
         canon_adj.txt        canon_adj_pl.txt
@@ -616,21 +616,17 @@ class Scholar:
             #distances.append(spatial.distance.cosine(v, vec_d))
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
             # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
-        start = time.clock() ###
         distances = self.get_pisa_scores(self.model.vectors,end_vec,
                                          affordance_vec).tolist() #FIX THIS!!!! Causes distances.index(min_dist) to complain if not .tolist()
-        print "DOT TIME: " + str(time.clock() - start) ###
 
         found_words = []
         found_distance = []
-        start=time.clock() ###
         for count in range(0, num_words):
             min_dist = min(distances)
             index = distances.index(min_dist)
             found_words.append(self.model.vocab[index])
             found_distance.append(min_dist)
             distances[index] = 1000
-        print "LOOP TIME: " + str(time.clock() - start) ###
 
         return np.array(map(str,found_words)), np.array(found_distance)
 
