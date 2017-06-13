@@ -3,7 +3,8 @@ import numpy as np
 import scipy.spatial as spatial
 import cPickle as pkl
 import matplotlib.pyplot as plt
-from tqdm import tqdm
+from tqdm import tqdm #used in circular_walk_graph
+import time #used in temporary testing of get_pisa_scores
 
 ''' Files used by this class:
         canon_adj.txt        canon_adj_pl.txt
@@ -94,10 +95,6 @@ class Scholar:
         vec1 = self.model.get_vector(word1)
         vec2 = self.model.get_vector(word2)
         return self.angle(vec1, vec2)
-
-    # CHANGE MADE BY NATHAN
-    def get_closest_words(self, vec, num=1):
-        return self.model.get_closest_words(vec, num)
 
     # Return the analogy results for a list of words (input: "king -man woman")
     def analogy(self, words_string):
@@ -619,20 +616,35 @@ class Scholar:
             #distances.append(spatial.distance.cosine(v, vec_d))
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
             # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
-
-        distances = self.get_pisa_scores(self.model.vectors,end_vec,affordance_vec).tolist() #FIX THIS!!!! Causes distances.index(min_dist) to complain.
+        start = time.clock() ###
+        distances = self.get_pisa_scores(self.model.vectors,end_vec,
+                                         affordance_vec).tolist() #FIX THIS!!!! Causes distances.index(min_dist) to complain if not .tolist()
+        print "DOT TIME: " + str(time.clock() - start) ###
 
         found_words = []
         found_distance = []
+        start=time.clock() ###
         for count in range(0, num_words):
             min_dist = min(distances)
             index = distances.index(min_dist)
             found_words.append(self.model.vocab[index])
             found_distance.append(min_dist)
             distances[index] = 1000
+        print "LOOP TIME: " + str(time.clock() - start) ###
 
         return np.array(map(str,found_words)), np.array(found_distance)
 
+
+    # Wrapper for other functions
+    def get_closest_words(self, vec, num_words=1,
+                          exclude=False, exc_list=[], pisa="none"):
+        if pisa == "none":
+            if exclude:
+                return self.model.get_closest_words_excluding(
+                    vec, exc_list, num_words)
+            else: return self.model.get_closest_words(vec, num_words)
+        else: #####STUFF!!!
+            pass
 
 #-----------------------------------------------------------------------------#
 #   Analogies
@@ -674,8 +686,7 @@ class Scholar:
             return self.wordify(self.model.analogy(
                 [to_b, on_c], [from_a], num_words))
         else:
-            return self.wordify(
-                self.model.get_closest_words(end_vec, num_words))
+            return self.wordify(self.model.get_closest_words(end_vec, num_words))
 
 
     def yarax_analogy(self, from_a, to_b, on_c,
@@ -905,6 +916,7 @@ class Scholar:
                     angles.append(i) # Can use this as label locations as well.
 
         # GRAPH CONSTRUCTION:
+        move = 0 # An offset for the labels
         indecies = range(len(words))
         # This is our baseline - the vectors at each angle along the way:
         position_vecs = [self.yarax(vec_c, analogy_dir,
@@ -926,7 +938,10 @@ class Scholar:
                        for i in range(360)] for w in tqdm(indecies,
                                             desc="Analogous Pisa Measuring")]
         else:
-            if pisa != "none": print "Unrecognized pisa type!"
+            if pisa != "none":
+                print "Unrecognized pisa type!"
+                return
+            move = 2
             graphs = [[self.angle(position_vecs[i], word_vecs[w])*180/np.pi
                        for i in range(360)] for w in tqdm(indecies,
                                             desc="Angle Measuring")]
@@ -960,7 +975,7 @@ class Scholar:
             plt.plot(range(360), graphs[w], color_tags[w % len(color_tags)],
                      linewidth=1)
         for w in indecies: #Plot labels
-            plt.annotate(words[w], xy=(angles[w], graphs[w][angles[w]] + 2),
+            plt.annotate(words[w], xy=(angles[w], graphs[w][angles[w]] + move),
                          color=colors[w % len(colors)], fontsize=9)
         #plt.annotate(words[0], xy=(angles[0], graphs[0][angles[0]] + 1),
         #             color=colors[0], fontsize=9) # For the first word again.
