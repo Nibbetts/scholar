@@ -576,18 +576,23 @@ class Scholar:
         #       as we know that's essentially what yarax does.
 
 
-    def get_pisa_scores(self,db_words,center_of_search,direction_of_travel):
+    def get_pisa_scores(self, db_words, center_of_search, direction_of_travel,
+                        scale=1):
 
         #CALCULATE COSINE SIMILARITIES OF ALL VECTORS TO SOURCE WORD
         #(We normalize center_of_search in case it doesn't have unit length,
         #but we assume db_words are normalized already...)
-        base_distances = 1 - np.dot(db_words,center_of_search.T)/(np.linalg.norm(db_words,axis=1)*np.linalg.norm(center_of_search))
+        base_distances = 1 - np.dot(db_words,center_of_search.T)/
+            np.linalg.norm(center_of_search)
+        #OR, IN CASE SPACE ISN'T NORMALIZED:
+        #base_distances = 1 - np.dot(db_words,center_of_search.T)/(
+        #    np.linalg.norm(db_words,axis=1)*np.linalg.norm(center_of_search))
 
         vector_to_source = center_of_search + direction_of_travel
         vectors_to_words = center_of_search - db_words
         supplementary_distances = 1 - np.dot(vectors_to_words,vector_to_source.T)/(np.linalg.norm(vectors_to_words,axis=1) * np.linalg.norm(vector_to_source))
 
-        scale_factor = 1 #TO BE PLAYED WITH, or made a variable
+        scale_factor = scale #TO BE PLAYED WITH, or made a variable
         return scale_factor * (2-supplementary_distances) + base_distances
 
 
@@ -617,16 +622,19 @@ class Scholar:
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
             # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
         distances = self.get_pisa_scores(self.model.vectors,end_vec,
-                                         affordance_vec).tolist() #FIX THIS!!!! Causes distances.index(min_dist) to complain if not .tolist()
+                                         affordance_vec)
 
         found_words = []
         found_distance = []
         for count in range(0, num_words):
-            min_dist = min(distances)
-            index = distances.index(min_dist)
+            #OLD AND SLOW:
+            #min_dist = min(distances)
+            #index = distances.index(min_dist)
+            min_dist = np.amin(distances)
+            index = np.where(distances==min_dist)[0][0]
             found_words.append(self.model.vocab[index])
             found_distance.append(min_dist)
-            distances[index] = 1000
+            distances[index] = 1000 # Making it no longer the min of distances.
 
         return np.array(map(str,found_words)), np.array(found_distance)
 
