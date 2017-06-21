@@ -22,7 +22,7 @@ from tqdm import tqdm #used in circular_walk_graph
 class Scholar:
 
     # Initializes the class
-    def __init__(self, slim=False):
+    def __init__(self, slim=False, pisa_scale=1):
         self.slim = slim
         if self.slim:
             self.word2vec_bin_loc = 'scholar/postagged_wikipedia_for_word2vec_30kn3kv.pkl'
@@ -494,7 +494,7 @@ class Scholar:
             vec_ref: the vector of the analogy - length does not matter.
             theta: the angle traversed around the hypersphere
                 in the direction of the reference vector,
-                starting from the tip of vec_x.
+                starting from the tip of vec_x. In radians.
             returns: the vector resulting from the angular traversal.
             Methodology: y = A^(-1) * R * A * x, where:
                 x is our starting vector,
@@ -513,6 +513,18 @@ class Scholar:
         row2 = vec_dir - np.dot(vec_x, vec_dir)*vec_x
         row2 /= np.linalg.norm(row2)  # ...and normalize it.
         return np.dot(
+            np.vstack((vec_x, row2)).T,  # The basis of the plane to rotate in,
+                # This is A^(-1), or A^T because it is orthonormal (truncated).
+            np.array([np.cos(theta), np.sin(theta)]).T) # Truncated R;
+                # This is R*A*x, where A*x = [1,0] because it is the
+                #   representation of a vector in a plane created from itself
+                #   and an orthogonal vector.
+                # Thus only the left half of the original R remains.
+
+        # OLD:
+        '''row2 = vec_dir - np.dot(vec_x, vec_dir)*vec_x
+        row2 /= np.linalg.norm(row2)  # ...and normalize it.
+        return np.dot(
             np.vstack((vec_x, row2)).T,  # The basis of the plane to rotate in.
             np.dot(
                 # The rotational matrix:
@@ -520,7 +532,7 @@ class Scholar:
                  [np.sin(theta),  np.cos(theta)]],
                 # The representation of our vector to rotate,
                 #    in the basis of the plane to rotate it in:
-                [1, 0]))
+                [1, 0]))'''
 
 
     def average_vector(self, vec_list):
@@ -562,8 +574,8 @@ class Scholar:
             center_of_search + direction_of_travel, # vec_to_source
             center_of_search - spot_to_score)       # vec_to_word
 
-        scale_factor = 1.0 #CHANGE THIS
-        score = (scale_factor * (2.0-supplementary_distance) + # base_distance:
+        score = (self.pisa_scale * (2.0-supplementary_distance) +
+                 # base_distance:
                  spatial.distance.cosine(spot_to_score,center_of_search))
 
         return score
@@ -577,27 +589,30 @@ class Scholar:
 
 
     def get_pisa_scores(self, db_words, center_of_search, direction_of_travel,
-                        scale=1):
+                        scale=self.pisa_scale):
 
         #CALCULATE COSINE SIMILARITIES OF ALL VECTORS TO SOURCE WORD
         #(We normalize center_of_search in case it doesn't have unit length,
         #but we assume db_words are normalized already...)
-        base_distances = 1 - np.dot(db_words,center_of_search.T)/
-            np.linalg.norm(center_of_search)
+        base_distances = 1 - (np.dot(db_words,center_of_search.T) /
+                              np.linalg.norm(center_of_search))
         #OR, IN CASE SPACE ISN'T NORMALIZED:
         #base_distances = 1 - np.dot(db_words,center_of_search.T)/(
         #    np.linalg.norm(db_words,axis=1)*np.linalg.norm(center_of_search))
 
         vector_to_source = center_of_search + direction_of_travel
         vectors_to_words = center_of_search - db_words
-        supplementary_distances = 1 - np.dot(vectors_to_words,vector_to_source.T)/(np.linalg.norm(vectors_to_words,axis=1) * np.linalg.norm(vector_to_source))
+        supplementary_distances = (
+            1 - (np.dot(vectors_to_words, vector_to_source.T) /
+                 (np.linalg.norm(vectors_to_words,axis=1) *
+                  np.linalg.norm(vector_to_source))))
 
-        scale_factor = scale #TO BE PLAYED WITH, or made a variable
-        return scale_factor * (2-supplementary_distances) + base_distances
+        return scale * (2-supplementary_distances) + base_distances
 
 
     def get_closest_words_pisa(self, vec_from_a, vec_to_b, vec_on_c, end_vec,
-                               num_words=10, pisa="diagonal"):
+                               num_words=10,
+                               pisa="diagonal", scale=self.pisa_scale):
         # end_vec is the result of the analogy, and the center of our search.
         if pisa == "diagonal":
             # Move away from all source words.
@@ -610,7 +625,11 @@ class Scholar:
         elif pisa == "analogous":
             # Move away from b, the analogical equivalent.
             affordance_vec = end_vec - vec_to_b
+        elif pisa == "origin":
+            # Move in direction from c to d, but starting from c.
+            affordance_vec = end_vec - vec_on_c
         else:
+            raise ValueError("Skipped origin call?")
             print "Unrecognized Pisa type \"" + pisa + "\"."
             return np.array([]), np.array([])
 
@@ -621,20 +640,29 @@ class Scholar:
             #distances.append(spatial.distance.cosine(v, vec_d))
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
             # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
-        distances = self.get_pisa_scores(self.model.vectors,end_vec,
-                                         affordance_vec)
+        if: pisa == "origin":
+            distances = self.get_pisa_scores(self.model.vectors, vec_on_c,
+                                             affordance_vec, scale=scale)
+        else:
+            distances = self.get_pisa_scores(self.model.vectors, end_vec,
+                                             affordance_vec, scale=scale)
+                                             #.tolist()
 
         found_words = []
         found_distance = []
         for count in range(0, num_words):
-            #OLD AND SLOW:
+            #OLDER AND SLOW:
             #min_dist = min(distances)
             #index = distances.index(min_dist)
-            min_dist = np.amin(distances)
-            index = np.where(distances==min_dist)[0][0]
+            #OLD AND LESS FAST:
+            #min_dist = np.amin(distances)
+            #index = np.where(distances==min_dist)[0][0]
+            #found_words.append(self.model.vocab[index])
+            #found_distance.append(min_dist)
+            index = np.argmin(distances)
             found_words.append(self.model.vocab[index])
-            found_distance.append(min_dist)
-            distances[index] = 1000 # Making it no longer the min of distances.
+            found_distance.append(distances[index])
+            distances[index] = 1000 # Now not min.
 
         return np.array(map(str,found_words)), np.array(found_distance)
 
