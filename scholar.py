@@ -24,6 +24,7 @@ class Scholar:
     # Initializes the class
     def __init__(self, slim=False, pisa_scale=1):
         self.slim = slim
+        self.pisa_scale = pisa_scale
         if self.slim:
             self.word2vec_bin_loc = 'scholar/postagged_wikipedia_for_word2vec_30kn3kv.pkl'
             self.tag_distribution_loc = 'scholar/postag_distributions_for_scholar_30kn3kv.txt'
@@ -35,7 +36,11 @@ class Scholar:
         self.autoAddTags = True
         self.load_word2vec(self.word2vec_bin_loc)
         # This is a list of the tags as organized in the text file
-        self.tag_list = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP', 'NNPS', 'PDT', 'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'SYM', 'TO', 'UH', 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB']
+        self.tag_list = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR',
+                         'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP', 'NNPS', 'PDT',
+                         'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'SYM',
+                         'TO', 'UH', 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ',
+                         'WDT', 'WP', 'WP$', 'WRB']
         self.load_tag_counts(self.tag_distribution_loc)
 
     # Return a list of words from a file
@@ -589,8 +594,9 @@ class Scholar:
 
 
     def get_pisa_scores(self, db_words, center_of_search, direction_of_travel,
-                        scale=self.pisa_scale):
-
+                        scale='default'):
+        if scale == 'default':
+            scale = self.pisa_scale
         #CALCULATE COSINE SIMILARITIES OF ALL VECTORS TO SOURCE WORD
         #(We normalize center_of_search in case it doesn't have unit length,
         #but we assume db_words are normalized already...)
@@ -612,7 +618,9 @@ class Scholar:
 
     def get_closest_words_pisa(self, vec_from_a, vec_to_b, vec_on_c, end_vec,
                                num_words=10,
-                               pisa="diagonal", scale=self.pisa_scale):
+                               pisa="diagonal", scale='default'):
+        if scale == 'default':
+            scale = self.pisa_scale
         # end_vec is the result of the analogy, and the center of our search.
         if pisa == "diagonal":
             # Move away from all source words.
