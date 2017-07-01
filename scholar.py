@@ -640,7 +640,7 @@ class Scholar:
             #distances.append(spatial.distance.cosine(v, vec_d))
             distances.append(self.pisa_score(v, end_vec, affordance_vec))
             # DO MATH INSTEAD OF FOR, OR LIST COMPREHENSION AT LEAST'''
-        if: pisa == "origin":
+        if pisa == "origin":
             distances = self.get_pisa_scores(self.model.vectors, vec_on_c,
                                              affordance_vec, scale=scale)
         else:
