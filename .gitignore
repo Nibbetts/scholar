@@ -5,3 +5,10 @@ gensim_tagged
 *.bin
 *.txt~
 enwiki_dist_parsey.txt
+postag*.txt
+*.pkl
+__pycache__
+minitruncated*
+wordvectors.py.ALTERED
+canon_*.txt
+path_to_wordvectors.py.txt
